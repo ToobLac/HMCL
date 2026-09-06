@@ -56,8 +56,8 @@ public abstract class LocalAddonFile {
 
     public abstract void delete() throws IOException;
 
-    private long cfFingerprint = -1L;
-    private String sha1 = null;
+    private volatile transient long cfFingerprint = -1L;
+    private volatile transient String sha1 = null;
 
     /// Calculates file fingerprint for CurseForge.
     ///
