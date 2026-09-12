@@ -40,6 +40,7 @@ import org.jackhuang.hmcl.ui.decorator.DecoratorPage;
 import org.jackhuang.hmcl.ui.download.ModpackInstallWizardProvider;
 import org.jackhuang.hmcl.ui.instances.GameAdvancedListItem;
 import org.jackhuang.hmcl.ui.instances.GameListPopupMenu;
+import org.jackhuang.hmcl.ui.instances.GameProcessPage;
 import org.jackhuang.hmcl.ui.instances.Instances;
 import org.jackhuang.hmcl.ui.nbt.NBTEditorPage;
 import org.jackhuang.hmcl.ui.nbt.NBTFileType;
@@ -153,6 +154,12 @@ public class RootPage extends DecoratorAnimatedPage implements DecoratorPage {
             }
 
             // fifth item in left sidebar
+            AdvancedListItem gameProcessItem = new AdvancedListItem();
+            gameProcessItem.setLeftIcon(SVG.TERMINAL);
+            gameProcessItem.setTitle(i18n("game.process"));
+            gameProcessItem.setOnAction(e -> Controllers.navigate(Controllers.getGameProcessPage()));
+
+            // sixth item in left sidebar
             AdvancedListItem launcherSettingsItem = new AdvancedListItem();
             launcherSettingsItem.setLeftIcon(SVG.SETTINGS);
             launcherSettingsItem.setTitle(i18n("settings"));
@@ -164,7 +171,7 @@ public class RootPage extends DecoratorAnimatedPage implements DecoratorPage {
                 FXUtils.prepareOnMouseEnter(launcherSettingsItem, Controllers::prepareSettingsPage);
             }
 
-            // sixth item in left sidebar
+            // seventh item in left sidebar
             AdvancedListItem terracottaItem = new AdvancedListItem();
             terracottaItem.setLeftIcon(SVG.GRAPH2);
             terracottaItem.setTitle(i18n("terracotta"));
@@ -195,6 +202,7 @@ public class RootPage extends DecoratorAnimatedPage implements DecoratorPage {
                     .add(gameListItem)
                     .add(gameItem)
                     .add(downloadItem)
+                    .add(gameProcessItem)
                     .startCategory(i18n("settings.launcher.general").toUpperCase(Locale.ROOT))
                     .add(launcherSettingsItem)
                     .add(terracottaItem)
