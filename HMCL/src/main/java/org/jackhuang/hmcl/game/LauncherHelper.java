@@ -20,7 +20,6 @@ package org.jackhuang.hmcl.game;
 import com.jfoenix.controls.JFXButton;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
-import javafx.collections.ObservableList;
 import javafx.stage.Stage;
 import org.jackhuang.hmcl.Launcher;
 import org.jackhuang.hmcl.auth.*;

@@ -120,8 +120,8 @@ public class GameProcessPage extends ListPageBase<GameProcessPage.GameProcessHol
                 this.title = id + " #" + i;
             }
            {
-               Bindings.bindContent(logs, processListener.getLogWindow().getLogs());
-               if (!logs.isEmpty()) {
+                Bindings.bindContent(logs, processListener.getLogWindow().getLogs());
+                if (!logs.isEmpty()) {
                     lastLogLine.set(logs.get(logs.size() - 1).getLog());
                 }
                 logs.addListener((InvalidationListener) o -> {

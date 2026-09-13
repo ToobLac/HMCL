@@ -40,7 +40,6 @@ import org.jackhuang.hmcl.ui.decorator.DecoratorPage;
 import org.jackhuang.hmcl.ui.download.ModpackInstallWizardProvider;
 import org.jackhuang.hmcl.ui.instances.GameAdvancedListItem;
 import org.jackhuang.hmcl.ui.instances.GameListPopupMenu;
-import org.jackhuang.hmcl.ui.instances.GameProcessPage;
 import org.jackhuang.hmcl.ui.instances.Instances;
 import org.jackhuang.hmcl.ui.nbt.NBTEditorPage;
 import org.jackhuang.hmcl.ui.nbt.NBTFileType;
