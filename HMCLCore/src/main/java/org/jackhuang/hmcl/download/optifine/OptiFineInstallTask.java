@@ -17,9 +17,7 @@
  */
 package org.jackhuang.hmcl.download.optifine;
 
-import org.jackhuang.hmcl.download.DefaultDependencyManager;
-import org.jackhuang.hmcl.download.UnsupportedInstallationException;
-import org.jackhuang.hmcl.download.VersionMismatchException;
+import org.jackhuang.hmcl.download.*;
 import org.jackhuang.hmcl.download.game.GameDownloadTask;
 import org.jackhuang.hmcl.game.*;
 import org.jackhuang.hmcl.task.FileDownloadTask;
@@ -29,6 +27,7 @@ import org.jackhuang.hmcl.util.io.FileUtils;
 import org.jackhuang.hmcl.util.platform.CommandBuilder;
 import org.jackhuang.hmcl.java.JavaRuntime;
 import org.jackhuang.hmcl.util.platform.SystemUtils;
+import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
 import org.jackhuang.hmcl.util.versioning.VersionNumber;
 import org.jenkinsci.constant_pool_scanner.ConstantPool;
 import org.jenkinsci.constant_pool_scanner.ConstantPoolScanner;
@@ -122,8 +121,9 @@ public final class OptiFineInstallTask extends Task<GameInstancePatch> {
         dest = installerFile;
 
         if (installer == null) {
+            DownloadProvider downloadProvider = dependencyManager.getDownloadProvider();
             var task = new FileDownloadTask(
-                    dependencyManager.getDownloadProvider().injectURLsWithCandidates(remote.getUrls()),
+                    downloadProvider.getDownloadCandidates(remote),
                     installerFile, null);
             task.setCacheRepository(dependencyManager.getCacheRepository());
             task.setCaching(true);
@@ -154,7 +154,7 @@ public final class OptiFineInstallTask extends Task<GameInstancePatch> {
             throw new IOException("Minecraft client JAR not found: " + minecraftJar);
         }
         Path installerFile = Objects.requireNonNull(dest);
-        String originalMainClass = dependencyManager.getGameRepository().resolve(manifest).launchManifest().mainClass();
+        String originalMainClass = manifest.mainClass();
         if (!GameComponentAnalyzer.FORGE_OPTIFINE_MAIN.contains(originalMainClass))
             throw new UnsupportedInstallationException(UnsupportedInstallationException.UNSUPPORTED_LAUNCH_WRAPPER);
 
@@ -253,7 +253,7 @@ public final class OptiFineInstallTask extends Task<GameInstancePatch> {
     /// Creates a task that installs OptiFine from a local installer JAR.
     ///
     /// @param dependencyManager repository-scoped download services
-    /// @param version           working manifest receiving the OptiFine patch
+    /// @param manifest           working manifest receiving the OptiFine patch
     /// @param gameVersion       Minecraft version expected by the installation
     /// @param installer         the OptiFine installer JAR
     /// @return the task producing the OptiFine patch
@@ -261,7 +261,7 @@ public final class OptiFineInstallTask extends Task<GameInstancePatch> {
     /// @throws VersionMismatchException if the installer targets another Minecraft version
     public static Task<GameInstancePatch> install(
             DefaultDependencyManager dependencyManager,
-            GameInstanceManifest version,
+            GameInstanceManifest manifest,
             String gameVersion,
             Path installer) throws IOException, VersionMismatchException {
         try (FileSystem fs = CompressingUtils.createReadOnlyZipFileSystem(installer)) {
@@ -283,14 +283,14 @@ public final class OptiFineInstallTask extends Task<GameInstancePatch> {
                 throw new VersionMismatchException(mcVersion, gameVersion);
 
             OptiFineRemoteVersion remoteVersion = new OptiFineRemoteVersion(
-                    mcVersion,
+                    GameVersionNumber.asGameVersion(mcVersion),
                     ofEdition + "_" + ofRelease,
                     Collections.singletonList(""),
                     false);
-            return new GameDownloadTask(dependencyManager, version)
+            return new GameDownloadTask(dependencyManager, manifest)
                     .thenComposeAsync(minecraftJar -> new OptiFineInstallTask(
                             dependencyManager,
-                            version,
+                            manifest,
                             remoteVersion,
                             minecraftJar,
                             installer));

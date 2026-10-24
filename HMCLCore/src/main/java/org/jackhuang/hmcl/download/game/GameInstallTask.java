@@ -62,7 +62,7 @@ public class GameInstallTask extends Task<GameInstancePatch> {
         this.dependencyManager = dependencyManager;
         this.manifest = manifest;
         this.remote = remoteVersion;
-        this.downloadTask = new GameInstanceJsonDownloadTask(remoteVersion.getGameVersion(), dependencyManager);
+        this.downloadTask = new GameInstanceJsonDownloadTask(remoteVersion.getGameVersion().toString(), dependencyManager);
     }
 
     /// {@inheritDoc}
@@ -89,11 +89,11 @@ public class GameInstallTask extends Task<GameInstancePatch> {
         GameInstancePatch patch = GameInstancePatch.fromManifest(
                 JsonUtils.fromNonNullJson(downloadTask.getResult(), GameInstanceManifest.class),
                 GameComponentType.GAME.getPatchId(),
-                remote.getGameVersion(),
+                remote.getGameVersion().toString(),
                 GameInstancePatch.PRIORITY_MC).withJar(null);
         setResult(patch);
 
-        GameInstanceManifest newManifest = new GameInstanceManifest(this.manifest.id()).addPatch(patch);
+        GameInstanceManifest newManifest = new GameInstanceManifest(this.manifest.id()).addPatch(patch).reconstructByPatches();
         dependencies.add(Task.allOf(
                 new GameDownloadTask(dependencyManager, newManifest),
                 Task.allOf(

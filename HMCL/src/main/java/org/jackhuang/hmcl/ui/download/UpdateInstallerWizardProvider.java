@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ui.download;
 import javafx.scene.Node;
 import org.jackhuang.hmcl.download.*;
 import org.jackhuang.hmcl.download.game.GameAssetIndexDownloadTask;
+import org.jackhuang.hmcl.download.game.GameRemoteVersion;
 import org.jackhuang.hmcl.download.game.LibraryDownloadException;
 import org.jackhuang.hmcl.game.GameComponentType;
 import org.jackhuang.hmcl.game.GameInstanceManifest;
@@ -35,11 +36,11 @@ import org.jackhuang.hmcl.util.SettingsMap;
 import org.jackhuang.hmcl.util.StringUtils;
 import org.jackhuang.hmcl.util.i18n.I18n;
 import org.jackhuang.hmcl.util.io.ResponseCodeException;
+import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.net.SocketTimeoutException;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.concurrent.CancellationException;
 import java.util.zip.ZipException;
@@ -65,6 +66,7 @@ public final class UpdateInstallerWizardProvider implements WizardProvider {
     public void start(SettingsMap settings) {
     }
 
+    /// Creates a task that updates components and synchronizes the client JAR with the resulting manifest.
     @Override
     public Object finish(SettingsMap settings) {
         settings.put("title", i18n("install.change_version.process"));
@@ -73,27 +75,26 @@ public final class UpdateInstallerWizardProvider implements WizardProvider {
 
         var hints = new ArrayList<Task.StagesHint>();
         for (Object value : settings.asStringMap().values()) {
-            if (value instanceof RemoteVersion remoteVersion) {
+            if (value instanceof ComponentRemoteVersion remoteVersion) {
+                hints.add(new Task.StagesHint("hmcl.install.libraries"));
+
                 hints.add(new Task.StagesHint(String.format("hmcl.install.%s:%s", remoteVersion.getComponentType().getPatchId(), remoteVersion.getSelfVersion())));
                 if (remoteVersion.getComponentType() == GameComponentType.GAME) {
-                    hints.add(new Task.StagesHint("hmcl.install.libraries"));
                     hints.add(new Task.StagesHint("hmcl.install.assets"));
                 }
             }
         }
 
-        return gameInstance.getRepository().updateInstanceAsync(gameInstance.getId(), publishedInstance -> {
+        return dependencyManager.updateInstanceAsync(gameInstance.getId(), publishedInstance -> {
             Task<GameInstanceManifest> update = Task.supplyAsync(publishedInstance::getManifest);
             for (Object value : settings.asStringMap().values()) {
-                if (value instanceof RemoteVersion remoteVersion) {
+                if (value instanceof ComponentRemoteVersion remoteVersion) {
                     update = update.thenComposeAsync(manifest ->
-                            dependencyManager.installComponentAsync(publishedInstance, manifest, remoteVersion));
-                } else if (value instanceof RemoveVersionAction removeVersionAction) {
-                    update = update.thenComposeAsync(manifest ->
-                            dependencyManager.removeComponentAsync(
-                                    publishedInstance,
-                                    manifest,
-                                    removeVersionAction.componentType));
+                            dependencyManager.installComponentRemoteAsync(publishedInstance, manifest, remoteVersion));
+                } else if (value instanceof RemoveComponentAction removeComponentAction) {
+                    update = update.thenApplyAsync(manifest ->
+                            manifest.removeComponent(removeComponentAction.componentType));
+
                 }
             }
             return update;
@@ -104,14 +105,14 @@ public final class UpdateInstallerWizardProvider implements WizardProvider {
     public Node createPage(WizardController controller, int step, SettingsMap settings) {
         switch (step) {
             case 0:
-                return new VersionsPage(controller, i18n("install.installer.choose", i18n("install.installer." + componentType)), gameInstance.getVersion().toString(), downloadProvider, componentType, () -> {
+                return new VersionsPage(controller, i18n("install.installer.choose", i18n("install.installer." + componentType.getPatchId())), gameInstance.getVersion(), downloadProvider, componentType, () -> {
                     if (oldLibraryVersion == null) {
                         controller.onFinish();
                     } else if (componentType == GameComponentType.GAME) {
-                        String newGameVersion = ((RemoteVersion) settings.get(componentType.getPatchId())).getSelfVersion();
+                        GameVersionNumber newGameVersion = ((GameRemoteVersion) settings.get(componentType.getPatchId())).getGameVersion();
                         controller.onNext(new AdditionalInstallersPage(gameInstance, newGameVersion, controller, downloadProvider));
                     } else {
-                        Controllers.confirm(i18n("install.change_version.confirm", i18n("install.installer." + componentType), oldLibraryVersion, ((RemoteVersion) settings.get(componentType.getPatchId())).getSelfVersion()),
+                        Controllers.confirm(i18n("install.change_version.confirm", i18n("install.installer." + componentType.getPatchId()), oldLibraryVersion, ((ComponentRemoteVersion) settings.get(componentType.getPatchId())).getSelfVersion()),
                                 i18n("install.change_version"), controller::onFinish, controller::onCancel);
                     }
                 });
@@ -137,27 +138,27 @@ public final class UpdateInstallerWizardProvider implements WizardProvider {
             String message = i18n("launch.failed.download_library", ((LibraryDownloadException) exception).getLibrary().name()) + "\n";
             if (exception.getCause() instanceof ResponseCodeException rce) {
                 int responseCode = rce.getResponseCode();
-                String uri = rce.getUri();
+                String url = rce.getUrl();
                 if (responseCode == 404)
-                    message += i18n("download.code.404", uri);
+                    message += i18n("download.code.404", url);
                 else
-                    message += i18n("download.failed", uri, responseCode);
+                    message += i18n("download.failed", url, responseCode);
             } else {
                 message += StringUtils.getStackTrace(exception.getCause());
             }
             Controllers.dialog(message, i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
-        } else if (exception instanceof DownloadException) {
-            URI uri = ((DownloadException) exception).getUri();
+        } else if (exception instanceof DownloadException de) {
+            String url = de.getUrl();
             if (exception.getCause() instanceof SocketTimeoutException) {
-                Controllers.dialog(i18n("install.failed.downloading.timeout", uri), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
+                Controllers.dialog(i18n("install.failed.downloading.timeout", url), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
             } else if (exception.getCause() instanceof ResponseCodeException responseCodeException) {
                 if (I18n.hasKey("download.code." + responseCodeException.getResponseCode())) {
-                    Controllers.dialog(i18n("download.code." + responseCodeException.getResponseCode(), uri), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
+                    Controllers.dialog(i18n("download.code." + responseCodeException.getResponseCode(), url), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
                 } else {
-                    Controllers.dialog(i18n("install.failed.downloading.detail", uri) + "\n" + StringUtils.getStackTrace(exception.getCause()), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
+                    Controllers.dialog(i18n("install.failed.downloading.detail", url) + "\n" + StringUtils.getStackTrace(exception.getCause()), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
                 }
             } else {
-                Controllers.dialog(i18n("install.failed.downloading.detail", uri) + "\n" + StringUtils.getStackTrace(exception.getCause()), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
+                Controllers.dialog(i18n("install.failed.downloading.detail", url) + "\n" + StringUtils.getStackTrace(exception.getCause()), i18n("install.failed.downloading"), MessageDialogPane.MessageType.ERROR, next);
             }
         } else if (exception instanceof UnsupportedInstallationException unsupportedInstallationException) {
             switch (unsupportedInstallationException.getReason()) {
@@ -183,11 +184,6 @@ public final class UpdateInstallerWizardProvider implements WizardProvider {
         }
     }
 
-    public static class RemoveVersionAction {
-        private final GameComponentType componentType;
-
-        public RemoveVersionAction(GameComponentType componentType) {
-            this.componentType = componentType;
-        }
+    public record RemoveComponentAction(GameComponentType componentType) {
     }
 }

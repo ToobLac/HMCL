@@ -189,28 +189,6 @@ public class HMCLGameInstance extends DefaultGameInstance {
         return GameSettings.resolve(getRepository().getParentGameSettings(setting), setting);
     }
 
-    /// Applies the selected parent preset's default isolation policy to this instance.
-    public void applyDefaultIsolationSetting() {
-        @Nullable GameSettings.Instance instanceSetting = getSettings();
-        GameSettings.Preset preset = getRepository().getParentGameSettings(instanceSetting);
-        DefaultIsolationType type = Lang.requireNonNullElse(
-                preset.defaultIsolationTypeProperty().getValue(), DefaultIsolationType.MODDED);
-        boolean isolated = switch (type) {
-            case NEVER -> false;
-            case ALWAYS -> true;
-            case MODDED -> getResolvedManifest().isModded();
-        };
-
-        if (isolated) {
-            @Nullable GameSettings.Instance setting =
-                    instanceSetting != null ? instanceSetting : getSettingsOrCreate();
-            if (setting != null
-                    && setting.getOverrideProperties().add(GameSettings.PROPERTY_RUNNING_DIRECTORY)) {
-                saveSettings();
-            }
-        }
-    }
-
     /// Creates empty instance-local game settings when none are loaded.
     ///
     /// @return the settings, or `null` when settings are read-only or already present in a non-creatable state
@@ -231,6 +209,23 @@ public class HMCLGameInstance extends DefaultGameInstance {
     public boolean isSettingsReadOnly() {
         ensureGameSettingsLoaded();
         return gameSettingsReadOnly;
+    }
+
+    /// Enables instance-local running-directory selection for this instance.
+    ///
+    /// A blank local running directory resolves to the instance root. This operation is idempotent
+    /// and schedules a settings save only when it adds the override. It leaves the instance
+    /// unchanged when its local settings cannot be written safely.
+    public void enableIsolation() {
+        if (isSettingsReadOnly()) {
+            return;
+        }
+
+        @Nullable GameSettings.Instance setting = getSettingsOrCreate();
+        if (setting != null
+                && setting.getOverrideProperties().add(GameSettings.PROPERTY_RUNNING_DIRECTORY)) {
+            saveSettings();
+        }
     }
 
     /// Backs up and overwrites the settings file when this instance still owns its settings.
@@ -477,7 +472,7 @@ public class HMCLGameInstance extends DefaultGameInstance {
             GameVersionNumber version = getVersion();
             if (version.isAprilFools())
                 return GameInstanceIconType.APRIL_FOOLS.getIcon();
-            else if (version instanceof GameVersionNumber.LegacySnapshot)
+            else if (version instanceof GameVersionNumber.LegacySnapshot || version instanceof GameVersionNumber.Release release && release.getEaType() != GameVersionNumber.Release.ReleaseType.GA)
                 return GameInstanceIconType.COMMAND.getIcon();
             else if (version instanceof GameVersionNumber.Old)
                 return GameInstanceIconType.CRAFT_TABLE.getIcon();
@@ -570,7 +565,13 @@ public class HMCLGameInstance extends DefaultGameInstance {
         return getLayout().getInstanceGameSettingsFile(id);
     }
 
-    public LaunchOptions.Builder getLaunchOptions(JavaRuntime javaVersion, Path gameDir, List<String> javaAgents, List<String> javaArguments, boolean makeLaunchScript) {
+    public LaunchOptions.Builder getLaunchOptions(
+            JavaRuntime javaRuntime,
+            Path javaExecutable,
+            Path gameDir,
+            List<String> javaAgents,
+            List<String> javaArguments,
+            boolean makeLaunchScript) {
         GameSettings.Effective vs = getEffectiveSettings();
         boolean noJVMOptions = vs.getInheritable(GameSettings::noJVMOptionsProperty);
         boolean autoMemory = vs.getInheritable(GameSettings::autoMemoryProperty);
@@ -582,7 +583,7 @@ public class HMCLGameInstance extends DefaultGameInstance {
                     ? null
                     : Math.toIntExact(HMCLGameRepository.getAutoAllocatedMemory(
                             SystemInfo.getPhysicalMemoryStatus().available(),
-                            javaVersion.getPlatform()) / 1024L / 1024L);
+                            javaRuntime.getPlatform()) / 1024L / 1024L);
         } else {
             maxMemory = vs.getMaxMemory();
         }
@@ -590,7 +591,8 @@ public class HMCLGameInstance extends DefaultGameInstance {
         LaunchOptions.Builder builder = new LaunchOptions.Builder()
                 .setInstanceId(getId())
                 .setGameDir(gameDir)
-                .setJava(javaVersion)
+                .setJava(javaRuntime)
+                .setJavaExecutable(javaExecutable)
                 .setVersionType(Metadata.TITLE)
                 .setVersionName(getId().id())
                 .setProfileName(Metadata.TITLE)
@@ -626,7 +628,7 @@ public class HMCLGameInstance extends DefaultGameInstance {
                 .setEnableDebugLogOutput(vs.getInheritable(GameSettings::enableDebugLogOutputProperty))
                 .setAllowAutoAgent(vs.getInheritable(GameSettings::allowAutoAgentProperty))
                 .setDisableAutoGameOptions(vs.getInheritable(GameSettings::disableAutoGameOptionsProperty))
-                .setUseNativeGLFW(vs.getInheritable(GameSettings::useNativeGLFWProperty))
+                .setUseNativeGLFWorSDL(vs.getInheritable(GameSettings::useNativeGLFWorSDLProperty))
                 .setUseNativeOpenAL(vs.getInheritable(GameSettings::useNativeOpenALProperty))
                 .setUseHighPerformanceGPU(vs.getInheritable(GameSettings::highPerformanceProperty))
                 .setDaemon(!makeLaunchScript && vs.getInheritable(GameSettings::launcherVisibilityProperty).isDaemon())

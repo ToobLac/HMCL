@@ -21,9 +21,9 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 
+import org.jackhuang.hmcl.addon.LocalAddonManager;
 import org.jackhuang.hmcl.addon.mod.ModManager;
 import org.jackhuang.hmcl.addon.repository.ModrinthRemoteAddonRepository;
 import org.jackhuang.hmcl.game.DefaultGameInstance;
@@ -34,6 +34,7 @@ import org.jackhuang.hmcl.modpack.Modpack;
 import org.jackhuang.hmcl.modpack.ModpackExportInfo;
 import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.util.DigestUtils;
+import org.jackhuang.hmcl.util.StringUtils;
 import org.jackhuang.hmcl.util.gson.JsonUtils;
 import org.jackhuang.hmcl.util.io.Zipper;
 import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
@@ -93,21 +94,21 @@ public class ModrinthModpackExportTask extends Task<Void> {
 
         boolean isDisabled = modManager.isDisabled(file);
         if (isDisabled) {
-            relativePath = modManager.enableMod(Paths.get(relativePath)).toString();
+            relativePath = StringUtils.removeSuffix(relativePath, LocalAddonManager.DISABLED_EXTENSION);
         }
 
         Optional<RemoteAddon.Version> modrinthVersion = Optional.empty();
         Optional<RemoteAddon.Version> curseForgeVersion = Optional.empty();
 
         try {
-            modrinthVersion = ModrinthRemoteAddonRepository.MODS.getRemoteVersionByLocalFile(file);
+            modrinthVersion = ModrinthRemoteAddonRepository.getInstance().getRemoteVersionByLocalFile(file);
         } catch (IOException e) {
             LOG.warning("Failed to get remote file from Modrinth for: " + file, e);
         }
 
         if (!info.isSkipCurseForgeRemoteFiles() && CurseForgeRemoteAddonRepository.isAvailable()) {
             try {
-                curseForgeVersion = CurseForgeRemoteAddonRepository.MODS.getRemoteVersionByLocalFile(file);
+                curseForgeVersion = CurseForgeRemoteAddonRepository.getInstance().getRemoteVersionByLocalFile(file);
             } catch (IOException e) {
                 LOG.warning("Failed to get remote file from CurseForge for: " + file, e);
             }

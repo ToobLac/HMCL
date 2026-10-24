@@ -24,10 +24,8 @@ import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.util.Lang;
-import org.jackhuang.hmcl.util.function.ExceptionalFunction;
 import org.jackhuang.hmcl.util.gson.JsonUtils;
 import org.jackhuang.hmcl.util.io.FileUtils;
-import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -116,31 +114,6 @@ public abstract class DefaultGameRepository implements GameRepository {
     /// @return the layout used by this repository
     protected abstract DefaultGameRepositoryLayout createLayout(Path baseDirectory);
 
-    /// Returns whether a new draft may claim `instanceRoot` as draft-owned storage.
-    ///
-    /// The default implementation permits only a root that does not exist. Subclasses may recognize
-    /// an explicit pre-install reservation, but must not permit an unrelated pre-existing directory:
-    /// aborting the draft will recursively remove every claimed root.
-    ///
-    /// @param instanceId   the instance being created
-    /// @param instanceRoot the normalized instance root
-    /// @return whether the draft may own and clean up the root
-    protected boolean mayClaimDraftInstanceRoot(GameInstanceID instanceId, Path instanceRoot) {
-        return Files.notExists(instanceRoot);
-    }
-
-    /// Materializes subclass-specific data for a newly claimed draft instance root.
-    ///
-    /// This method is called during commit, after the draft has recorded ownership and created the
-    /// root, so failure cleanup will remove the root. The default implementation has no additional
-    /// data to materialize.
-    ///
-    /// @param instanceId   the instance being created
-    /// @param instanceRoot the normalized instance root owned by the draft
-    /// @throws IOException if prepared data cannot be written
-    protected void initializeDraftInstanceRoot(GameInstanceID instanceId, Path instanceRoot) throws IOException {
-    }
-
     /// Prepares subclass-managed writes before instance files are moved or removed.
     ///
     /// The default implementation does nothing.
@@ -194,7 +167,6 @@ public abstract class DefaultGameRepository implements GameRepository {
     protected void publishSnapshot(DefaultGameRepositorySnapshot newSnapshot) {
         newSnapshot.seal();
         runOnFxThreadAndWait(() -> {
-
             snapshot.set(newSnapshot);
         });
     }
@@ -320,6 +292,8 @@ public abstract class DefaultGameRepository implements GameRepository {
                         LOG.warning("Failed to load instance", e);
                     }
                 }
+
+                newSnapshot.removeInvalidInstances();
             } catch (IOException e) {
                 LOG.warning("Failed to load instance from " + instancesDir, e);
             }
@@ -333,8 +307,10 @@ public abstract class DefaultGameRepository implements GameRepository {
     /// Loads one instance directory without renaming on-disk JSON or jar files.
     ///
     /// When the conventional `versions/<id>/<id>.json` is missing but the directory contains exactly
-    /// one JSON file, that manifest path is recorded on the instance. The primary jar is derived as
-    /// the sibling path with the same base name.
+    /// one JSON file, that manifest path is recorded on the instance. If there are multiple JSON
+    /// files, selects the first parseable manifest in file-name order with a non-blank main class,
+    /// a parent instance, or non-empty patches. The primary jar is derived as the sibling path
+    /// with the same base name.
     ///
     /// @param snapshot the unsealed snapshot that will own the instance
     /// @param dir      the instance directory under `versions/`
@@ -358,12 +334,13 @@ public abstract class DefaultGameRepository implements GameRepository {
             json = conventionalJson;
         } else {
             List<Path> jsons = FileUtils.listFilesByExtension(dir, "json");
-            if (jsons.size() != 1) {
+            @Nullable Path candidate = jsons.size() == 1 ? jsons.get(0) : findInstanceManifest(jsons);
+            if (candidate == null) {
                 LOG.info("No available json file found, ignoring instance " + id);
                 return null;
             }
 
-            json = jsons.get(0);
+            json = candidate;
             if (!json.equals(conventionalJson)) {
                 manifestFileOverride = json;
             }
@@ -387,8 +364,35 @@ public abstract class DefaultGameRepository implements GameRepository {
         return createInstance(snapshot, id, manifest, manifestFileOverride);
     }
 
+    /// Finds the first parseable manifest in file-name order with a non-blank main class,
+    /// a parent instance, or non-empty patches, skipping unreadable and malformed candidates.
+    ///
+    /// @param jsons the candidate JSON files; the list is not modified
+    /// @return the selected path, or `null` if no candidate matches
+    private static @Nullable Path findInstanceManifest(List<Path> jsons) {
+        for (Path json : jsons.stream().sorted(Comparator.comparing(FileUtils::getName)).toList()) {
+            try {
+                GameInstanceManifest manifest = readInstanceManifest(json);
+                @Nullable String mainClass = manifest.mainClass();
+                if ((mainClass != null && !mainClass.isBlank())
+                        || manifest.inheritsFrom() != null
+                        || !manifest.getPatches().isEmpty()) {
+                    return json;
+                }
+            } catch (IOException | RuntimeException ignored) {
+            }
+        }
+        return null;
+    }
+
+    /// Reads a non-null instance manifest from a JSON file.
+    ///
+    /// @param json the manifest file
+    /// @return the parsed manifest
+    /// @throws IOException if the file cannot be read
+    /// @throws JsonParseException if the JSON is malformed or does not describe a manifest
     private static GameInstanceManifest readInstanceManifest(Path json) throws IOException, JsonParseException {
-        GameInstanceManifest manifest = JsonUtils.fromJsonFile(json, GameInstanceManifest.class);
+        @Nullable GameInstanceManifest manifest = JsonUtils.fromJsonFile(json, GameInstanceManifest.class);
         if (manifest == null) {
             throw new JsonParseException("Manifest is null");
         }
@@ -440,25 +444,6 @@ public abstract class DefaultGameRepository implements GameRepository {
     @Override
     public DefaultGameInstance getInstance(GameInstanceID id) throws NoSuchGameInstanceException {
         return getSnapshot().getRegistered(id);
-    }
-
-    /// Returns the instance recorded in the current snapshot for the given id.
-    ///
-    /// @param id the instance id
-    /// @return the instance, or `null` when absent from the current snapshot
-    protected @Nullable DefaultGameInstance findSnapshotInstance(GameInstanceID id) {
-        return getSnapshot().get(id);
-    }
-
-    @Override
-    public Path getInstanceJar(GameInstanceManifest manifest) {
-        GameInstanceManifest resolved = this.resolve(manifest).launchManifest();
-        GameInstanceID id = Optional.ofNullable(resolved.jar()).orElse(resolved.id());
-        DefaultGameInstance instance = findSnapshotInstance(id);
-        if (instance != null) {
-            return instance.getOwnJarFile();
-        }
-        return getLayout().getInstanceJarFile(id);
     }
 
     @Override
@@ -533,58 +518,6 @@ public abstract class DefaultGameRepository implements GameRepository {
         }
     }
 
-    @Override
-    public Optional<String> getGameVersion(GameInstanceManifest manifest) {
-        DefaultGameInstance instance = findSnapshotInstance(manifest.id());
-        if (instance != null && manifest.equals(instance.getManifest())) {
-            GameVersionNumber version = instance.getVersion();
-            if (version == GameVersionNumber.unknown()) {
-                return Optional.empty();
-            }
-            return Optional.of(version.toString());
-        }
-
-        try {
-            GameInstanceManifest resolved = resolve(manifest).launchManifest();
-            Path instanceJar = getInstanceJar(resolved);
-            Optional<String> gameVersion = GameVersion.minecraftVersion(instanceJar);
-            if (gameVersion.isEmpty()) {
-                LOG.warning("Cannot find out game version of " + manifest.id()
-                        + ", primary jar: " + instanceJar
-                        + ", jar exists: " + Files.exists(instanceJar));
-            }
-            return gameVersion;
-        } catch (NoSuchGameInstanceException e) {
-            return Optional.empty();
-        }
-    }
-
-    /// Returns the stored instance manifest file for an instance.
-    ///
-    /// When the instance is loaded with a non-conventional path, that path is returned; otherwise
-    /// the layout default `versions/<id>/<id>.json` is used.
-    ///
-    /// @param instanceId the instance id
-    /// @return the manifest JSON path
-    public Path getInstanceJson(GameInstanceID instanceId) {
-        DefaultGameInstance instance = findSnapshotInstance(instanceId);
-        if (instance != null) {
-            return instance.getManifestFile();
-        }
-        return getLayout().getInstanceJson(instanceId);
-    }
-
-    /// Returns the run directory to use while installing an instance before it is published.
-    ///
-    /// The default official-layout repository uses its shared base directory. Subclasses may derive
-    /// an isolated directory from repository-specific settings without creating a [GameInstance].
-    ///
-    /// @param instanceId the instance being installed
-    /// @return the installation run directory
-    public Path getRunDirectoryForInstallation(GameInstanceID instanceId) {
-        return getBaseDirectory();
-    }
-
     /// Opens a draft for staging instance index changes and committing them once.
     ///
     /// @return a new open draft
@@ -619,52 +552,6 @@ public abstract class DefaultGameRepository implements GameRepository {
     /// @return the task that saves and publishes the manifest
     public Task<GameInstanceManifest> saveAsync(GameInstanceManifest instanceManifest) {
         return Task.supplyAsync(() -> save(instanceManifest));
-    }
-
-    /// Creates a task that updates one registered instance inside an exclusive draft.
-    ///
-    /// The updater receives the instance from the immutable published snapshot and must return a
-    /// working manifest with the same id. Its result is staged and committed exactly once. Failure
-    /// or cancellation aborts the draft; shared cache files written by the updater are retained.
-    ///
-    /// @param <E> the checked exception type thrown while creating the update task
-    /// @param instanceId the instance to update
-    /// @param updater    the asynchronous manifest update
-    /// @return the task that commits the updated manifest
-    public <E extends Exception> Task<Void> updateInstanceAsync(
-            GameInstanceID instanceId,
-            ExceptionalFunction<GameInstance, Task<GameInstanceManifest>, E> updater) {
-        var active = new AtomicReference<@Nullable GameRepositoryDraft>();
-        return Task.supplyAsync(() -> {
-                    GameRepositoryDraft draft = openDraft();
-                    active.set(draft);
-                    return draft.getBaseSnapshot().getInstance(instanceId);
-                })
-                .thenComposeAsync(updater)
-                .thenApplyAsync(manifest -> {
-                    GameRepositoryDraft draft = active.get();
-                    if (draft == null) {
-                        throw new IllegalStateException("Game repository draft is unavailable");
-                    }
-                    if (!instanceId.equals(manifest.id())) {
-                        throw new IllegalArgumentException(
-                                "Instance updater changed id from " + instanceId + " to " + manifest.id());
-                    }
-                    draft.put(manifest);
-                    draft.commit();
-                    return manifest;
-                })
-                .whenComplete(exception -> {
-                    GameRepositoryDraft draft = active.getAndSet(null);
-                    if (draft != null && draft.isOpen()) {
-                        draft.abort();
-                    }
-                });
-    }
-
-    @Override
-    public GameInstanceManifest.Resolved resolve(GameInstanceManifest manifest) throws NoSuchGameInstanceException {
-        return getSnapshot().resolve(manifest);
     }
 
     /// Creates an empty unsealed snapshot for the given layout.

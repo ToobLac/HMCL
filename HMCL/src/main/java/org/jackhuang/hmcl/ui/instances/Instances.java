@@ -24,6 +24,7 @@ import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.auth.Account;
 import org.jackhuang.hmcl.auth.authlibinjector.AuthlibInjectorAccount;
 import org.jackhuang.hmcl.download.DefaultDependencyManager;
+import org.jackhuang.hmcl.download.DownloadCandidates;
 import org.jackhuang.hmcl.download.DownloadProvider;
 import org.jackhuang.hmcl.download.game.GameAssetDownloadTask;
 import org.jackhuang.hmcl.download.game.GameDownloadTask;
@@ -46,15 +47,14 @@ import org.jackhuang.hmcl.ui.export.ExportWizardProvider;
 import org.jackhuang.hmcl.util.StringUtils;
 import org.jackhuang.hmcl.util.TaskCancellationAction;
 import org.jackhuang.hmcl.util.gson.JsonUtils;
+import org.jackhuang.hmcl.util.i18n.I18n;
 import org.jackhuang.hmcl.util.io.FileUtils;
 import org.jackhuang.hmcl.util.platform.OperatingSystem;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
@@ -81,9 +81,9 @@ public final class Instances {
 
     public static void downloadModpackImpl(DownloadProvider downloadProvider, HMCLGameRepository repository, GameInstanceID instanceId, RemoteAddon mod, RemoteAddon.Version file) {
         Path modpack;
-        List<URI> downloadURLs;
+        DownloadCandidates downloadURLs;
         try {
-            downloadURLs = downloadProvider.injectURLWithCandidates(file.file().url());
+            downloadURLs = downloadProvider.getDownloadCandidates(file.file().url());
             modpack = Files.createTempFile("modpack", ".zip");
         } catch (IOException | IllegalArgumentException e) {
             Controllers.dialog(
@@ -175,10 +175,12 @@ public final class Instances {
         GameInstanceManifest manifest;
         try {
             manifest = JsonUtils.fromJsonFile(file, GameInstanceManifest.class);
-            if (manifest == null) {
+            if (manifest == null)
                 throw new IllegalArgumentException("Missing game manifest");
-            }
+            if (manifest.inheritsFrom() != null)
+                throw new IllegalArgumentException("Game manifest inherits from another manifest");
         } catch (Exception e) {
+            LOG.warning("Failed to read game manifest from " + file, e);
             Controllers.dialog(i18n("install.new_game.malformed_json"), i18n("message.error"), MessageDialogPane.MessageType.ERROR);
             return;
         }
@@ -233,7 +235,7 @@ public final class Instances {
                                     repository.setSelectedInstance(repository.getInstance(instanceId));
                                 } else {
                                     Controllers.dialog(
-                                            DownloadProviders.localizeErrorMessage(exception), i18n("install.failed"), MessageDialogPane.MessageType.ERROR);
+                                            I18n.localizeErrorMessage(exception), i18n("install.failed"), MessageDialogPane.MessageType.ERROR);
                                 }
                             }), i18n("install.new_game"), TaskCancellationAction.NORMAL);
         }, FileUtils.getNameWithoutExtension(file), new Validator(i18n("install.new_game.malformed"), HMCLGameRepository::isValidInstanceId), new Validator(i18n("install.new_game.already_exists"), newVersionName -> !repository.instanceIdConflicts(newVersionName)));
@@ -274,7 +276,7 @@ public final class Instances {
     public static void updateGameAssets(HMCLGameInstance gameInstance) {
         TaskExecutor executor = new GameAssetDownloadTask(
                 gameInstance.getRepository().getDependency(),
-                gameInstance.getResolvedManifest().launchManifest(),
+                gameInstance.getResolvedManifest(),
                 GameAssetDownloadTask.DOWNLOAD_INDEX_FORCIBLY,
                 true).executor();
         Controllers.taskDialog(executor, i18n("instance.manage.redownload_assets_index"), TaskCancellationAction.NO_CANCEL);

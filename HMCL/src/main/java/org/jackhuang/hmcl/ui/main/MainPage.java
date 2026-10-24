@@ -44,9 +44,7 @@ import javafx.scene.layout.VBox;
 import javafx.scene.text.TextFlow;
 import javafx.util.Duration;
 import org.jackhuang.hmcl.Metadata;
-import org.jackhuang.hmcl.download.DefaultDependencyManager;
 import org.jackhuang.hmcl.download.DownloadProvider;
-import org.jackhuang.hmcl.download.VersionList;
 import org.jackhuang.hmcl.game.*;
 import org.jackhuang.hmcl.setting.DownloadProviders;
 import org.jackhuang.hmcl.setting.GameDirectoryManager;
@@ -72,7 +70,6 @@ import org.jackhuang.hmcl.util.i18n.I18n;
 import org.jackhuang.hmcl.util.javafx.BindingMapping;
 import org.jackhuang.hmcl.util.platform.OperatingSystem;
 import org.jackhuang.hmcl.util.platform.Platform;
-import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.UnmodifiableView;
 
@@ -81,7 +78,7 @@ import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
 
-import static org.jackhuang.hmcl.download.RemoteVersion.Type.RELEASE;
+import static org.jackhuang.hmcl.download.ComponentRemoteVersion.Type.RELEASE;
 import static org.jackhuang.hmcl.setting.SettingsManager.state;
 import static org.jackhuang.hmcl.ui.FXUtils.SINE;
 import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
@@ -121,7 +118,8 @@ public final class MainPage extends StackPane implements DecoratorPage {
         titleNode.setAlignment(Pos.CENTER_LEFT);
 
         ImageView titleIcon = new ImageView(FXUtils.newBuiltinImage("/assets/img/icon-title.png"));
-        Label titleLabel = new Label(Metadata.FULL_TITLE);
+        Label titleLabel = new Label();
+        titleLabel.textProperty().bind(Controllers.launcherTitleProperty());
         if (I18n.isUpsideDown()) {
             titleIcon.setRotate(180);
             titleLabel.setRotate(180);
@@ -361,31 +359,30 @@ public final class MainPage extends StackPane implements DecoratorPage {
 
     private void launchNoGame() {
         DownloadProvider downloadProvider = DownloadProviders.getDownloadProvider();
-        VersionList<?> versionList = downloadProvider.getVersionList(GameComponentType.GAME);
 
         Holder<GameInstanceID> instanceHolder = new Holder<>();
-        Task<?> task = versionList.refreshAsync("")
-                .thenSupplyAsync(() -> versionList.getVersions("").stream()
+        Task<?> task = downloadProvider.getVersionsAsync(GameComponentType.GAME, null, false)
+                .thenApplyAsync(versions -> versions.stream()
                         .filter(it -> it.getVersionType() == RELEASE)
-                        .filter(it -> NativePatcher.checkSupportedStatus(GameVersionNumber.asGameVersion(it.getGameVersion()), Platform.SYSTEM_PLATFORM, OperatingSystem.SYSTEM_VERSION) != NativePatcher.SupportStatus.UNSUPPORTED)
+                        .filter(it -> NativePatcher.checkSupportedStatus(it.getGameVersion(), Platform.SYSTEM_PLATFORM, OperatingSystem.SYSTEM_VERSION) != NativePatcher.SupportStatus.UNSUPPORTED)
                         .sorted()
                         .findFirst()
                         .orElseThrow(() -> new IOException("No versions found")))
                 .thenComposeAsync(version -> {
                     HMCLGameRepository repository = GameDirectoryManager.getSelectedRepository();
-                    DefaultDependencyManager dependency = repository.getDependency();
+                    HMCLDependencyManager dependency = repository.getDependency();
 
-                    String gameVersion = version.getGameVersion();
+                    String gameVersion = version.getGameVersion().toString();
                     GameInstanceID instanceId = new GameInstanceID(gameVersion);
 
                     instanceHolder.value = instanceId;
 
-                    return dependency.newGameBuilder()
-                            .id(instanceId)
-                            .component(GameComponentType.GAME, gameVersion)
-                            .buildAsync();
+                    try (HMCLGameBuilder builder = dependency.newGameBuilder(instanceId)) {
+                        return builder
+                                .component(GameComponentType.GAME, gameVersion)
+                                .buildAsync();
+                    }
                 })
-                .whenComplete(any -> GameDirectoryManager.getSelectedRepository().refresh())
                 .whenComplete(Schedulers.javafx(), (result, exception) -> {
                     if (exception == null) {
                         HMCLGameRepository repository = GameDirectoryManager.getSelectedRepository();

@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.modpack.server;
 
 import com.google.gson.JsonParseException;
+import org.glavo.url.WebURL;
 import org.jackhuang.hmcl.download.DefaultDependencyManager;
 import org.jackhuang.hmcl.download.GameBuilder;
 import org.jackhuang.hmcl.game.DefaultGameInstance;
@@ -102,6 +103,7 @@ public class ServerModpackCompletionTask extends Task<Void> {
         }
 
         setStage("hmcl.modpack.download");
+        setSignificance(TaskSignificance.MODERATE);
     }
 
     @Override
@@ -112,7 +114,7 @@ public class ServerModpackCompletionTask extends Task<Void> {
     @Override
     public void preExecute() throws Exception {
         if (manifest == null || StringUtils.isBlank(manifest.getManifest().getFileApi())) return;
-        dependent = new GetTask(manifest.getManifest().getFileApi() + "/server-manifest.json");
+        dependent = new GetTask(WebURL.parse(manifest.getManifest().getFileApi() + "/server-manifest.json"));
     }
 
     @Override
@@ -142,14 +144,15 @@ public class ServerModpackCompletionTask extends Task<Void> {
         Map<String, String> oldAddons = toMap(manifest.getManifest().getAddons());
         Map<String, String> newAddons = toMap(remoteManifest.getAddons());
         if (!Objects.equals(oldAddons, newAddons)) {
-            GameBuilder builder = dependencyManager.newGameBuilder().id(instance.getId());
-            for (ServerModpackManifest.Addon addon : remoteManifest.getAddons()) {
-                @Nullable GameComponentType componentType = GameComponentType.fromPatchId(addon.getId());
-                if (componentType != null)
-                    builder.component(componentType, addon.getVersion());
-            }
+            try (GameBuilder builder = dependencyManager.newGameBuilder(instance)) {
+                for (ServerModpackManifest.Addon addon : remoteManifest.getAddons()) {
+                    @Nullable GameComponentType componentType = GameComponentType.fromPatchId(addon.getId());
+                    if (componentType != null)
+                        builder.component(componentType, addon.getVersion());
+                }
 
-            dependencies.add(builder.buildAsync());
+                dependencies.add(builder.buildAsync());
+            }
         }
 
         Path rootPath = instance.getInstanceRoot().toAbsolutePath().normalize();
