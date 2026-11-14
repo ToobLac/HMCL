@@ -12,6 +12,7 @@ import org.jackhuang.hmcl.util.Log4jLevel;
 import org.jackhuang.hmcl.util.platform.ManagedProcess;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.nio.file.Path;
 import java.util.*;
@@ -61,12 +62,12 @@ public final class GameLogsHolder {
         return gameProcess;
     }
 
-    public Map<Log4jLevel, SimpleIntegerProperty> getLevelCountMap() {
-        return levelCountMap;
+    public @Unmodifiable Map<Log4jLevel, SimpleIntegerProperty> getLevelCountMap() {
+        return Collections.unmodifiableMap(levelCountMap);
     }
 
-    public Map<Log4jLevel, SimpleBooleanProperty> getLevelShownMap() {
-        return levelShownMap;
+    public @Unmodifiable Map<Log4jLevel, SimpleBooleanProperty> getLevelShownMap() {
+        return Collections.unmodifiableMap(levelShownMap);
     }
 
     public ObservableList<Log> getItems() {
