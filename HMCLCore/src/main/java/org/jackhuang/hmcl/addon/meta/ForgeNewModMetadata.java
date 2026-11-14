@@ -282,8 +282,10 @@ public final class ForgeNewModMetadata {
         try {
             for (ZipArchiveEntry embeddedModFile : embeddedModFiles) {
                 tree.extractTo(embeddedModFile, tempFile);
+                CoreModInfo embeddedCoreModInfo = coreModInfo;
                 try (ZipFileTree embeddedTree = CompressingUtils.openZipTree(tempFile)) {
-                    CoreModInfo embeddedCoreModInfo = CoreModInfo.fromFile(modFile, embeddedTree);
+                    // TODO Full jar-in-jar support
+                    if (embeddedCoreModInfo.isEmpty()) embeddedCoreModInfo = CoreModInfo.fromFile(modFile, embeddedTree);
                     return fromFile(modManager, modFile, embeddedTree, modLoaderType, embeddedCoreModInfo);
                 } catch (Exception ignored) {
                 }
