@@ -60,7 +60,7 @@ public final class MultiMCModpackInstallTask extends Task<MultiMCInstancePatch.R
     private final List<Task<?>> dependencies = new ArrayList<>();
     private final DefaultDependencyManager dependencyManager;
 
-    private final Map<Library, Path> downloadedJarMods = new HashMap<>();
+    private final Map<Library, Path> remoteJarmods = new HashMap<>();
 
     /// Previous modpack configuration when updating, or `null` for a new installation.
     private final @Nullable ModpackConfiguration<MultiMCInstanceConfiguration> config;
@@ -367,7 +367,7 @@ public final class MultiMCModpackInstallTask extends Task<MultiMCInstancePatch.R
             for (var jarModFile : artifact.jarModFiles()) {
                 if (jarModFile.filename() == null) {
                     Path tempPath = Files.createTempFile("hmcl-mmc-jarmod-", ".zip");
-                    downloadedJarMods.put(jarModFile, tempPath);
+                    remoteJarmods.put(jarModFile, tempPath);
                     dependencies.add(new LibraryDownloadTask(dependencyManager, tempPath, jarModFile));
                 }
             }
@@ -409,10 +409,12 @@ public final class MultiMCModpackInstallTask extends Task<MultiMCInstancePatch.R
                     Path root = getRootPath(fs).resolve("jarmods");
 
                     try (FileSystem mc = CompressingUtils.writable(getPrimaryJarFile()).build()) {
+                        Set<Path> appliedPaths = new HashSet<>((int) Math.ceil(files.size() / 0.75D));
+
                         for (Library file : files) {
                             Path path = file.filename() != null
                                     ? root.resolve(file.filename())
-                                    : downloadedJarMods.get(file);
+                                    : remoteJarmods.get(file);
                             Objects.requireNonNull(path, "Jar mod file not found");
                             if (!Files.isRegularFile(path))
                                 throw new IOException("Jar mod file does not exist or is not a regular file: " + path);
@@ -475,7 +477,7 @@ public final class MultiMCModpackInstallTask extends Task<MultiMCInstancePatch.R
     }
 
     private void cleanup() {
-        for (Path path : downloadedJarMods.values()) {
+        for (Path path : remoteJarmods.values()) {
             try {
                 Files.deleteIfExists(path);
             } catch (IOException ignored) {
